@@ -187,4 +187,3 @@ Write-Host ''
 Write-Host '诊断完成：' -ForegroundColor Green
 $Summary | ForEach-Object { Write-Host $_ }
 Write-Host "完整报告: $ReportDir" -ForegroundColor Green
-

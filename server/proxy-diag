@@ -9,7 +9,6 @@ echo "Proxy Diagnostic Report"
 echo "Time: $(date -Is)"
 echo "Host: $(hostname)"
 line
-
 section 1 "OS / uptime / resources"
 uname -a
 sed -n '1,10p' /etc/os-release 2>/dev/null
@@ -84,4 +83,3 @@ journalctl -k --no-pager 2>/dev/null | grep -i -E 'oom|killed process' | tail -2
 line
 echo "End"
 line
-
