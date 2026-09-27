@@ -4,5 +4,11 @@
 
 - [生产部署基线](docs/production-baseline-2026-09-27.md)
 - [运维与故障排查](docs/operations-and-troubleshooting.md)
+- [Windows v2rayN 与双 VPS 联动诊断](docs/linked-diagnostics.md)
+
+诊断工具：
+
+- `client/`：当前 Windows v2rayN 的独立联动诊断入口，不修改客户端
+- `server/`：VPS 端只读快照、限时抓包与安装脚本
 
 > 安全说明：本仓库只记录脱敏后的拓扑、配置结构和验收结论。UUID、REALITY 密钥、shortId、HY2/AnyTLS 密码、SSH 私钥和完整客户端链接不得提交。

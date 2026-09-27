@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set +e
+
+line() { printf '%s\n' '============================================================'; }
+section() { printf '\n[%s] %s\n' "$1" "$2"; }
+
+line
+echo "Proxy Diagnostic Report"
+echo "Time: $(date -Is)"
+echo "Host: $(hostname)"
+line
+
+section 1 "OS / uptime / resources"
+uname -a
+sed -n '1,10p' /etc/os-release 2>/dev/null
+uptime
+free -h
+df -h /
+
+section 2 "Time synchronization"
+timedatectl 2>/dev/null | sed -n '1,15p'
+
+section 3 "Addresses and routes"
+ip -br addr
+ip route
+ip -6 route 2>/dev/null
+
+section 4 "Production DNS via 1.1.1.1"
+for name in xr.siafeng.xyz hy.siafeng.xyz at.siafeng.xyz; do
+  printf '%-22s A=' "$name"
+  dig +short A "$name" @1.1.1.1 | paste -sd, -
+  printf '%-22s AAAA=' "$name"
+  answer="$(dig +short AAAA "$name" @1.1.1.1)"
+  if [ -n "$answer" ]; then printf '%s\n' "$answer"; else echo '<none>'; fi
+done
+
+section 5 "Listening ports"
+ss -lntup | grep -E ':22|:80|:443|:8443' || true
+
+section 6 "UFW"
+ufw status verbose 2>/dev/null || true
+
+section 7 "Kernel network baseline"
+sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc 2>/dev/null
+
+section 8 "Xray / Nginx"
+if command -v xray >/dev/null 2>&1; then
+  xray version | head -1
+  systemctl is-active xray
+  xray run -test -config /usr/local/etc/xray/config.json 2>&1
+  journalctl -u xray -n 30 --no-pager 2>/dev/null
+fi
+if command -v nginx >/dev/null 2>&1; then
+  nginx -t 2>&1
+  systemctl is-active nginx
+fi
+
+section 9 "sing-box"
+if command -v sing-box >/dev/null 2>&1; then
+  sing-box version | head -1
+  systemctl is-active sing-box
+  sing-box check -c /etc/sing-box/config.json 2>&1
+  journalctl -u sing-box -n 30 --no-pager 2>/dev/null
+fi
+
+section 10 "Certificates"
+for cert in \
+  /etc/letsencrypt/live/xr.siafeng.xyz/fullchain.pem \
+  /etc/sing-box/tls/fullchain.pem; do
+  if [ -r "$cert" ]; then
+    echo "Certificate: $cert"
+    openssl x509 -in "$cert" -noout -subject -issuer -dates -ext subjectAltName 2>/dev/null
+  fi
+done
+systemctl is-active certbot.timer 2>/dev/null || true
+
+section 11 "Outbound connectivity"
+curl -4fsS --max-time 10 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^(ip|colo|warp)=' || echo 'Cloudflare trace failed'
+
+section 12 "Recent kernel and OOM errors"
+dmesg -T 2>/dev/null | tail -30
+journalctl -k --no-pager 2>/dev/null | grep -i -E 'oom|killed process' | tail -20
+
+line
+echo "End"
+line
+

@@ -1,5 +1,7 @@
 # 运维与故障排查
 
+日常优先使用[联动诊断工具](linked-diagnostics.md)，由当前 Windows v2rayN 客户端与两台 VPS 同时留证；下面保留手工命令作为复核手段。
+
 ## 1. 30 秒分流
 
 分别测试 XHTTP、HY2、AnyTLS：

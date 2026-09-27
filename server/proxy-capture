@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-all}"
+seconds="${2:-30}"
+case "$seconds" in
+  ''|*[!0-9]*) echo "seconds must be numeric" >&2; exit 2 ;;
+esac
+if [ "$seconds" -lt 5 ] || [ "$seconds" -gt 120 ]; then
+  echo "seconds must be between 5 and 120" >&2
+  exit 2
+fi
+case "$mode" in
+  xhttp) filter='tcp port 443' ;;
+  hy2) filter='udp port 443' ;;
+  anytls) filter='tcp port 443' ;;
+  all) filter='tcp port 443 or udp port 443' ;;
+  *) echo "mode must be xhttp, hy2, anytls, or all" >&2; exit 2 ;;
+esac
+
+echo "capture_mode=$mode seconds=$seconds host=$(hostname) start=$(date -Is) filter=$filter"
+timeout "$seconds" tcpdump -ni any -nn -tttt "$filter" 2>&1 || rc=$?
+rc="${rc:-0}"
+if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ]; then exit "$rc"; fi
+echo "capture_end=$(date -Is)"
+
