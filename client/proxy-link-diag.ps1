@@ -138,6 +138,12 @@ if ($Node -ne 'Snapshot') {
     $info = $NodeInfo[$Node]
     Write-Host "[5/6] 开始 $CaptureSeconds 秒联动窗口：$Node / $($info.Domain) / $($info.Transport)" -ForegroundColor Yellow
     Write-Host "现在请在 v2rayN 里双击对应 Siafeng 节点设为活动服务器，并连续打开网页或测速。" -ForegroundColor Yellow
+    [void](Read-Host '切换完成后按回车，脚本将开始服务端抓包和 10 MB 自动测速')
+
+    $runtimeSelected = Get-ActiveRuntime
+    if ($runtimeSelected -and $runtimeSelected.Server -ne $info.Domain) {
+        $Summary.Add("[操作提醒] 当前活动服务器为 $($runtimeSelected.Server)，不是 $($info.Domain)；请正确切换后重新运行")
+    }
 
     $tcpResult = $null
     if ($info.Transport -eq 'TCP') {
@@ -154,10 +160,61 @@ if ($Node -ne 'Snapshot') {
     $sshArgs = @('-o','BatchMode=yes','-o','ConnectTimeout=10','-i',$KeyPath,"ubuntu@$($info.Vps)",$remote)
     $captureProcess = Start-Process -FilePath 'ssh.exe' -ArgumentList $sshArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput $captureOut -RedirectStandardError $captureErr
 
+    $localCaptureProcess = $null
+    $dumpcap = 'C:\Program Files\Wireshark\dumpcap.exe'
+    $tshark = 'C:\Program Files\Wireshark\tshark.exe'
+    $localPcap = Join-Path $ReportDir "client-$($Node.ToLowerInvariant()).pcapng"
+    $localCaptureErr = Join-Path $ReportDir 'client-wireshark-capture.err.txt'
+    if (Test-Path -LiteralPath $dumpcap) {
+        $captureArgs = @()
+        $physicalRoute = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Where-Object { $_.NextHop -ne '0.0.0.0' } | Sort-Object RouteMetric,InterfaceMetric | Select-Object -First 1
+        if ($physicalRoute) {
+            $physicalAdapter = Get-NetAdapter -InterfaceIndex $physicalRoute.ifIndex -ErrorAction SilentlyContinue
+            if ($physicalAdapter) {
+                $physicalDevice = "\Device\NPF_$($physicalAdapter.InterfaceGuid)"
+                $captureArgs += @('-i',$physicalDevice,'-f',"`"host $($info.Vps) and port 443`"",'-s','128')
+            }
+        }
+        $tunAdapter = Get-NetAdapter -Name 'xray_tun' -ErrorAction SilentlyContinue
+        if ($tunAdapter) {
+            $tunDevice = "\Device\NPF_$($tunAdapter.InterfaceGuid)"
+            $captureArgs += @('-i',$tunDevice,'-f','"port 443"','-s','128')
+        }
+        if ($captureArgs.Count -gt 0) {
+            $captureArgs += @('-a',"duration:$CaptureSeconds",'-w',$localPcap)
+            $localCaptureProcess = Start-Process -FilePath $dumpcap -ArgumentList $captureArgs -WindowStyle Hidden -PassThru -RedirectStandardError $localCaptureErr
+        }
+    } else {
+        $Summary.Add('[本地抓包] 未找到 Wireshark dumpcap.exe，跳过本机 pcapng')
+    }
+
+    Start-Sleep -Seconds 2
+    $throughput = & curl.exe --proxy socks5h://127.0.0.1:10808 -L --max-time 45 -o NUL -sS -w 'http=%{http_code} bytes=%{size_download} seconds=%{time_total} avg_Bps=%{speed_download}' 'https://speed.cloudflare.com/__down?bytes=10000000' 2>&1
+    Save-Text 'client-throughput.txt' $throughput
+    if (($LASTEXITCODE -eq 0) -and (($throughput -join ' ') -match 'avg_Bps=([0-9.]+)')) {
+        $speedMB = [math]::Round(([double]$Matches[1] / 1MB), 2)
+        $Summary.Add("[吞吐样本] 当前节点经本地 SOCKS 10808 下载约 $speedMB MB/s；结果见 client-throughput.txt")
+    } else {
+        $Summary.Add('[吞吐故障] 通过本地 SOCKS 10808 的自动下载失败；查看 client-throughput.txt 与 v2rayn-relevant.log')
+    }
+
     $pingText = Test-Connection -ComputerName $info.Domain -Count 6 -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String
     Save-Text 'client-ping.txt' $pingText
     Wait-Process -Id $captureProcess.Id -Timeout ($CaptureSeconds + 15) -ErrorAction SilentlyContinue
     if (-not $captureProcess.HasExited) { Stop-Process -Id $captureProcess.Id -Force }
+    if ($localCaptureProcess) {
+        Wait-Process -Id $localCaptureProcess.Id -Timeout 10 -ErrorAction SilentlyContinue
+        if (-not $localCaptureProcess.HasExited) { Stop-Process -Id $localCaptureProcess.Id -Force }
+        if ((Test-Path -LiteralPath $localPcap) -and ((Get-Item -LiteralPath $localPcap).Length -gt 128)) {
+            $Summary.Add("[本地抓包 PASS] Wireshark pcapng 已生成：$localPcap")
+            if (Test-Path -LiteralPath $tshark) {
+                $wiresharkSummary = & $tshark -r $localPcap -q -z io,stat,0 2>&1
+                Save-Text 'client-wireshark-summary.txt' $wiresharkSummary
+            }
+        } else {
+            $Summary.Add('[本地抓包] Wireshark 未捕获到目标流量；查看 client-wireshark-capture.err.txt')
+        }
+    }
 
     $packetCount = 0
     if (Test-Path -LiteralPath $captureOut) {
